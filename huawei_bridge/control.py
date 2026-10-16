@@ -30,7 +30,7 @@ def translate(config, bindings, device):
         if '=' not in line:
             continue
         key, value = line.split('=', 1)
-        if not re.fullmatch(r'(radio|wireless)\.\d+\.(phyname|parent|ssid|status|channel|wmm)', key):
+        if not re.fullmatch(r'(radio|wireless)\.[0-9]+\.(phyname|parent|ssid|status|channel|wmm)', key):
             continue
         if key in values or '\x00' in value:
             raise ValueError('Duplicate or invalid provisioning field')
@@ -45,7 +45,7 @@ def translate(config, bindings, device):
         seen.add(phy)
         prefix = key.rsplit('.', 1)[0]
         path = bindings[phy]['path']
-        if not re.fullmatch(r'InternetGatewayDevice\.LANDevice\.\d+\.WLANConfiguration\.\d+', path):
+        if not re.fullmatch(r'InternetGatewayDevice\.LANDevice\.[0-9]+\.WLANConfiguration\.[0-9]+', path):
             raise ValueError('Invalid CPE radio binding')
         wlan = field(device, path)
         channel = values.get(prefix + '.channel')
@@ -53,7 +53,7 @@ def translate(config, bindings, device):
             desired[path + '.AutoChannelEnable'] = [True, 'xsd:boolean']
         elif channel is not None:
             allowed = str(val(wlan, 'PossibleChannels', '')).split(',')
-            if not channel.isdigit() or channel not in allowed:
+            if not (channel.isascii() and channel.isdigit()) or channel not in allowed:
                 raise ValueError('Channel not advertised by CPE')
             desired[path + '.AutoChannelEnable'] = [False, 'xsd:boolean']
             desired[path + '.Channel'] = [int(channel), 'xsd:unsignedInt']
@@ -86,13 +86,29 @@ def translate(config, bindings, device):
 
 
 class Control:
-    def __init__(self, directory, request, allowed_ip=''):
+    def __init__(self, directory, request, allowed_ip='', device_id=''):
         self.directory = Path(directory)
         self.request = request
         self.allowed_ip = ip(allowed_ip)
         if allowed_ip and not self.allowed_ip:
             raise ValueError('Invalid HUAWEI_CONTROL_IP')
+        self.device_id = device_id.strip() if isinstance(device_id, str) and device_id.strip() else None
         self.records = {}
+
+    def controlled(self, ap, aps=None):
+        """Decide whether writes are permitted for this device (fail-safe by default).
+
+        ``aps`` is the full normalized device list for the current collection, when
+        available. If a configured HUAWEI_CONTROL_IP matches more than one known
+        device, writes are rejected rather than guessing which one is intended.
+        """
+        if self.device_id is not None:
+            return ap.get('id') == self.device_id
+        if not self.allowed_ip or ap.get('ip') != self.allowed_ip:
+            return False
+        if aps is not None and sum(1 for a in aps if a.get('ip') == self.allowed_ip) > 1:
+            return False
+        return True
 
     def record(self, ap):
         identity = ap['virtual_mac']
@@ -108,10 +124,10 @@ class Control:
         from .unifi import atomic_json
         atomic_json(self.directory / (ap['virtual_mac'].replace(':', '') + '.json'), self.record(ap))
 
-    def public(self, ap):
+    def public(self, ap, aps=None):
         record = self.record(ap)
         return {key: record[key] for key in ('phase', 'error', 'requested_at', 'confirmed_at', 'task_id') if key in record} | {
-            'enabled': bool(self.allowed_ip and ap.get('ip') == self.allowed_ip),
+            'enabled': self.controlled(ap, aps),
             'parameters': sorted(record.get('changes', {}))}
 
     def mapping(self, ap, original):
@@ -140,8 +156,8 @@ class Control:
         record.update(phase='rejected', error=str(error))
         self.save(ap)
 
-    def receive(self, ap, response, device, mapping):
-        if not self.allowed_ip or ap.get('ip') != self.allowed_ip or response.get('system_cfg') is None:
+    def receive(self, ap, response, device, mapping, aps=None):
+        if not self.controlled(ap, aps) or response.get('system_cfg') is None:
             return
         record = self.record(ap)
         revision = response.get('cfgversion')

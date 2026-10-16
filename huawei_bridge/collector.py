@@ -30,10 +30,17 @@ def val(obj, name, default=None):
     return field.get('_value', default) if isinstance(field, dict) else default
 
 
+def text(value, limit):
+    # Allowlist printable ASCII only; reject non-ASCII digits/letters smuggled in CPE-reported strings.
+    value = str(value) if value is not None else ''
+    return ''.join(ch for ch in value if ch.isascii() and ch.isprintable())[:limit]
+
+
 def rows(obj):
     if not isinstance(obj, dict):
         return []
-    return sorted(((key, value) for key, value in obj.items() if key.isdigit() and isinstance(value, dict)),
+    return sorted(((key, value) for key, value in obj.items()
+                   if key.isascii() and key.isdigit() and isinstance(value, dict)),
                   key=lambda item: int(item[0]))
 
 
@@ -83,7 +90,7 @@ def normalize(devices, now=None):
             for _, host in rows(lan.get('Hosts', {}).get('Host')):
                 address = mac(val(host, 'MACAddress'))
                 if address:
-                    hosts[address] = {'hostname': str(val(host, 'HostName', ''))[:128],
+                    hosts[address] = {'hostname': text(val(host, 'HostName', ''), 63),
                                       'ip': ip(val(host, 'IPAddress'))}
         radios, stations = [], {}
         for lid, lan in rows(root.get('LANDevice')):
@@ -93,7 +100,7 @@ def normalize(devices, now=None):
                     continue
                 band = '2.4g' if channel <= 14 else '5g'
                 path = f'InternetGatewayDevice.LANDevice.{lid}.WLANConfiguration.{wid}'
-                radio = {'id': path, 'ssid': str(val(wlan, 'SSID', ''))[:128],
+                radio = {'id': path, 'ssid': text(val(wlan, 'SSID', ''), 32),
                          'channel': int(channel), 'band': band, 'bssid': mac(val(wlan, 'BSSID')),
                          'enabled': val(wlan, 'Enable'),
                          'standards': [s for s in str(val(wlan, 'Standard', '')).split('/')

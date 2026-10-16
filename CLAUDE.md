@@ -27,6 +27,10 @@ state or deployment-specific identifiers. Do not reset/readopt devices, delete
 volumes or modify physical router settings without explicit owner authorization.
 Do not broaden the provisioning allowlist or fabricate unavailable telemetry.
 
+For security review/remediation work, delegate review to the `mythra` agent and
+fixes to the `aegis` agent; neither commits by default — leave changes staged
+for the owner's review unless a commit is explicitly requested.
+
 ## Commands
 
 From the project root:
