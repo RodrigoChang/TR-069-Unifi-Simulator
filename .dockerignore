@@ -1,4 +1,6 @@
 .git
+.github
+.claude
 .env
 .env.*
 !.env.example
@@ -6,6 +8,14 @@
 .private
 .venv
 **/__pycache__
+**/*.pyc
+.pytest_cache
+.mypy_cache
+.ruff_cache
+.coverage
+.coverage.*
+htmlcov
+coverage.xml
 tests
 *.har
 captures
@@ -19,3 +29,11 @@ logs
 *.p12
 *.pfx
 .DS_Store
+.idea
+.vscode
+*.md
+!README.md
+report-data.json
+hallazgos.md
+hallazgos.ctb
+findings

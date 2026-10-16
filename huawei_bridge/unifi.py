@@ -6,6 +6,7 @@ import os
 import re
 import socket
 import tempfile
+import threading
 import time
 import urllib.request
 from pathlib import Path
@@ -32,6 +33,11 @@ def atomic_json(path, data):
             handle.flush()
             os.fsync(handle.fileno())
         os.replace(name, path)
+        dir_fd = os.open(path.parent, os.O_RDONLY)
+        try:
+            os.fsync(dir_fd)
+        finally:
+            os.close(dir_fd)
     finally:
         if os.path.exists(name):
             os.unlink(name)
@@ -43,7 +49,12 @@ def inform_url(url):
         raise ValueError('Invalid inform URL')
     if parsed.path != '/inform' or parsed.query or parsed.fragment:
         raise ValueError('Expected /inform URL without query or fragment')
-    address = socket.gethostbyname(parsed.hostname)
+    previous_timeout = socket.getdefaulttimeout()
+    socket.setdefaulttimeout(5)
+    try:
+        address = socket.gethostbyname(parsed.hostname)
+    finally:
+        socket.setdefaulttimeout(previous_timeout)
     ipaddress.IPv4Address(address)
     return urlunsplit((parsed.scheme, address + (f':{parsed.port}' if parsed.port else ''), '/inform', '', ''))
 
@@ -147,11 +158,14 @@ def apply_response(state, response):
 
 
 class UniFi:
-    def __init__(self, directory, url='', wlan_map=None, control=None, device_lookup=None):
+    def __init__(self, directory, url='', wlan_map=None, control=None, device_lookup=None, lock=None):
         self.directory = Path(directory)
         self.url = url
         self.wlan_map = validate_wlan_map(wlan_map if wlan_map is not None else {})
         self.control, self.device_lookup = control, device_lookup
+        # Shared with the HTTP reader (Application.snapshot) so status reads never
+        # observe a partially updated dict while the worker thread writes it.
+        self.lock = lock if lock is not None else threading.Lock()
         self.status = {}
         self.started = time.monotonic()
         self.next_send = {}
@@ -166,7 +180,7 @@ class UniFi:
         state['controller_url'] = self.url
         state['virtual_mac'] = identity
         mapping = self.wlan_map
-        controlled = bool(self.control and self.control.allowed_ip == ap.get('ip'))
+        controlled = bool(self.control and self.control.controlled(ap, snapshot['aps']))
         if self.control:
             mapping = self.control.mapping(ap, mapping)
             ack = self.control.ack(ap)
@@ -174,6 +188,10 @@ class UniFi:
                 state['cfgversion'] = ack
             elif controlled:
                 state['cfgversion'] = ''  # Request a baseline without applying existing defaults.
+        # Captured before apply_response() may populate authkey below: control.receive()
+        # must only trust packets decrypted with the adopted private key, never the
+        # public bootstrap key used during the unauthenticated first exchange.
+        had_authkey = bool(state.get('authkey'))
         key = bytes.fromhex(state['authkey']) if state.get('authkey') else BOOTSTRAP_KEY
         mode = state.get('encryption', 'cbc')
         data = payload(ap, snapshot, state, inform_url(self.url), time.monotonic() - self.started,
@@ -188,24 +206,26 @@ class UniFi:
             raise ProtocolError('Response identity or encryption mismatch')
         previous_cfg = state.get('cfgversion', '')
         delay = apply_response(state, decoded.body)
-        if controlled and decoded.body.get('_type') == 'setdefault':
+        if controlled and had_authkey and decoded.body.get('_type') == 'setdefault':
             self.control.reset(ap)
-        if controlled and decoded.body.get('_type') == 'setparam' and 'system_cfg' in decoded.body:
+        if controlled and had_authkey and decoded.body.get('_type') == 'setparam' and 'system_cfg' in decoded.body:
             try:
-                self.control.receive(ap, decoded.body, self.device_lookup(ap['id']), mapping)
+                self.control.receive(ap, decoded.body, self.device_lookup(ap['id']), mapping, snapshot['aps'])
             except ValueError as exc:
                 self.control.reject(ap, exc)
             state['cfgversion'] = self.control.ack(ap) or previous_cfg
         state['last_success'] = time.time()
         atomic_json(path, state)
-        self.status[identity] = {'phase': state['phase'], 'last_success': state['last_success'],
-                                  'model': MODEL, 'experimental': True,
-                                  'stations_sent': sum(len(v['sta_table']) for v in data['vap_table']),
-                                  'unmapped_ssids': sorted({r['ssid'] for r in ap['radios']
-                                      if r.get('enabled') is not False and not r.get('stale')
-                                      and r['ssid'] not in mapping})}
+        status = {'phase': state['phase'], 'last_success': state['last_success'],
+                  'model': MODEL, 'experimental': True,
+                  'stations_sent': sum(len(v['sta_table']) for v in data['vap_table']),
+                  'unmapped_ssids': sorted({r['ssid'] for r in ap['radios']
+                      if r.get('enabled') is not False and not r.get('stale')
+                      and r['ssid'] not in mapping})}
         if self.control:
-            self.status[identity]['configuration'] = self.control.public(ap)
+            status['configuration'] = self.control.public(ap, snapshot['aps'])
+        with self.lock:
+            self.status[identity] = status
         self.next_send[identity] = time.monotonic() + delay
 
     def tick(self, snapshot):
@@ -218,6 +238,7 @@ class UniFi:
                 self.exchange(ap, snapshot)
             except Exception as exc:
                 # HTTP/library messages may contain credentials or response bodies.
-                self.status[ap['virtual_mac']] = {'phase': 'error', 'error': type(exc).__name__,
-                    'http_status': getattr(exc, 'code', None), 'experimental': True}
+                with self.lock:
+                    self.status[ap['virtual_mac']] = {'phase': 'error', 'error': type(exc).__name__,
+                        'http_status': getattr(exc, 'code', None), 'experimental': True}
                 self.next_send[ap['virtual_mac']] = time.monotonic() + 30

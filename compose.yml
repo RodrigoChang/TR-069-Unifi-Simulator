@@ -1,9 +1,25 @@
 services:
   mongo:
-    image: mongo:7.0
+    image: mongo:7.0@sha256:9650758f83af117fc96699f030a44f9300bed839734e67012f56df05b2fd6290
     restart: unless-stopped
     volumes:
       - mongo-data:/data/db
+    read_only: true
+    tmpfs:
+      - /tmp
+      - /data/configdb
+    cap_drop:
+      - ALL
+    # The upstream entrypoint starts as root and drops to the mongodb user via
+    # gosu/chown; these are the minimum capabilities that step needs.
+    cap_add:
+      - CHOWN
+      - SETUID
+      - SETGID
+      - DAC_OVERRIDE
+      - FOWNER
+    security_opt:
+      - no-new-privileges:true
 
   cwmp:
     build: .
@@ -16,9 +32,19 @@ services:
       GENIEACS_CWMP_WORKER_PROCESSES: 1
       GENIEACS_NBI_WORKER_PROCESSES: 1
       GENIEACS_UI_WORKER_PROCESSES: 1
-      GENIEACS_UI_JWT_SECRET: test-only-change-before-production
+      # No insecure default: .env must set a real secret, or startup fails.
+      GENIEACS_UI_JWT_SECRET: ${GENIEACS_UI_JWT_SECRET:?GENIEACS_UI_JWT_SECRET must be set in .env (see .env.example)}
     ports:
-      - "7547:7547"
+      # CWMP has no server-side authentication in this lab stack; bind to the
+      # trusted LAN interface only, never 0.0.0.0. Set LAN_IP in .env.
+      - "${LAN_IP:-127.0.0.1}:7547:7547"
+    read_only: true
+    tmpfs:
+      - /tmp
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
 
   nbi:
     build: .
@@ -27,8 +53,18 @@ services:
     depends_on:
       - mongo
     environment: *genieacs-environment
+    # Loopback-only, for local debugging; the bridge reaches this service over
+    # the internal compose network as http://nbi:7557 and does not need this
+    # port published. Remove the mapping entirely if you don't use it.
     ports:
       - "127.0.0.1:7557:7557"
+    read_only: true
+    tmpfs:
+      - /tmp
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
 
   ui:
     build: .
@@ -39,6 +75,13 @@ services:
     environment: *genieacs-environment
     ports:
       - "127.0.0.1:3000:3000"
+    read_only: true
+    tmpfs:
+      - /tmp
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
 
   bridge:
     build:

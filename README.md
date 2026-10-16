@@ -107,8 +107,13 @@ data volumes.
 | Normalized snapshot | <http://127.0.0.1:8090/api/snapshot> |
 | Collector health | <http://127.0.0.1:8090/health> |
 | GenieACS UI | <http://127.0.0.1:3000> |
-| GenieACS NBI | `127.0.0.1:7557` |
-| CWMP listener | TCP `7547`, published on the Docker host's interfaces |
+| GenieACS NBI | `127.0.0.1:7557`, loopback only; the bridge reaches it internally as `nbi:7557` |
+| CWMP listener | TCP `7547`, published only on `LAN_IP` from `.env` (default `127.0.0.1`) |
+
+The dashboard and `/api/snapshot` have no authentication of their own. They rely
+entirely on being published on loopback and on the Host/Origin allowlist in
+`huawei_bridge/__main__.py`; do not reverse-proxy or publish them more broadly
+without adding your own authentication.
 
 Allow a few seconds for startup, then check:
 
@@ -133,14 +138,19 @@ In the router's TR-069 settings:
 
 Use the Docker host's LAN address, **not** loopback, a container address or the
 UniFi gateway address unless that gateway actually hosts this stack. Reserve the
-host address in DHCP or keep it static. Wait for an Inform and confirm the CPE
-appears in GenieACS and the dashboard.
+host address in DHCP or keep it static. Set `LAN_IP` in `.env` to that same host
+LAN address so Compose publishes the CWMP listener there instead of `0.0.0.0`.
+Wait for an Inform and confirm the CPE appears in GenieACS and the dashboard.
 
 **Lab security:** the supplied GenieACS configuration does not enforce the ACS
 credentials sent by the CPE. Entering them in the router does not enable
-server-side authentication. CWMP uses HTTP, and Compose includes a test UI JWT
-secret. Restrict TCP `7547` to the trusted LAN. Do not expose this stack directly
-to the Internet or treat these defaults as production-hardened.
+server-side authentication. CWMP uses HTTP. `GENIEACS_UI_JWT_SECRET` has no
+insecure default: set a real random value in `.env` (`.env.example` shows how to
+generate one), or Compose refuses to start. `LAN_IP` restricts TCP `7547` to the
+trusted LAN interface; never set it to `0.0.0.0` or expose this stack directly to
+the Internet. GenieACS itself does not support authenticating incoming CWMP
+connections in this stack; network-level restriction via `LAN_IP` is the control
+that matters here.
 
 ## Enable UniFi reporting
 
@@ -156,6 +166,8 @@ Edit `.env` using your own inform address and a real WLAN ID:
 UNIFI_INFORM_URL=http://<UNIFI_HOST>:8080/inform
 UNIFI_WLAN_MAP={"ExampleSSID":"0123456789abcdef01234567"}
 HUAWEI_CONTROL_IP=
+LAN_IP=<DOCKER_HOST_LAN_IP>
+GENIEACS_UI_JWT_SECRET=<RANDOM_SECRET>
 ```
 
 The example ID is not usable for your controller. The hostname must resolve from
@@ -263,6 +275,15 @@ exchange succeeded. Neither alone proves the AP is Online or its clients are
 visible. Verify those results in UniFi. SSH adoption and UDP discovery are not
 implemented.
 
+**Perform initial adoption on a trusted network.** The first exchange, before a
+private key is adopted, is decrypted with a public bootstrap key (the published
+UniFi discovery constant, not a secret), so anyone who can inject traffic on
+that path could attempt to intercept or spoof it. The bridge never applies
+controller-requested configuration from that pre-adoption exchange: writes to
+the Huawei (see below) are only accepted once a per-device private key has been
+adopted in a prior exchange. Still, perform adoption on a network you trust, and
+re-adopt (not simply ignore a warning) if you suspect it was interfered with.
+
 ## Optional configuration from UniFi
 
 To enable writes for one directly registered CPE, set its management/callback IP
@@ -271,6 +292,19 @@ in `.env` and recreate the bridge. This is disabled by default.
 ```ini
 HUAWEI_CONTROL_IP=<HUAWEI_MANAGEMENT_IP>
 ```
+
+If more than one registered CPE currently reports that same management IP, the
+bridge refuses to enable writes for any of them (fail-safe) rather than guessing.
+To target one CPE unambiguously regardless of IP, set its exact GenieACS device
+`_id` instead (or in addition):
+
+```ini
+HUAWEI_CONTROL_DEVICE_ID=<GENIEACS_DEVICE_ID>
+```
+
+`HUAWEI_CONTROL_DEVICE_ID` takes precedence over `HUAWEI_CONTROL_IP` when both
+are set. Find the device `_id` in the GenieACS UI's device list or via the NBI
+`/devices` endpoint.
 
 | UniFi field | Huawei TR-098 parameter |
 | --- | --- |
@@ -392,7 +426,7 @@ a second emitter against the same virtual AP while the Docker bridge is active.
 Tests use synthetic fixtures/local HTTP peers, not the real router; HTTP tests
 require permission to bind loopback sockets.
 
-The reference implementation has 20 automated tests covering normalization,
+The reference implementation has 22 automated tests covering normalization,
 encryption/adoption, WLAN mapping, HTTP boundaries, translation, persistence,
 readback, faults and uncertain outcomes. Hardware validation included adoption,
 restart persistence, client visibility, 160 MHz capability display and an
@@ -403,11 +437,14 @@ changes have not been validated against the physical router.
 | --- | --- |
 | `UNIFI_INFORM_URL` | Empty disables the emitter. |
 | `UNIFI_WLAN_MAP` | JSON mapping of exact SSIDs to real WLAN IDs; empty means no mapped WLANs. |
-| `HUAWEI_CONTROL_IP` | Empty disables writes; otherwise restricts provisioning to one management IP. |
+| `HUAWEI_CONTROL_IP` | Empty disables writes; otherwise restricts provisioning to one management IP (writes stay disabled if more than one CPE shares it). |
+| `HUAWEI_CONTROL_DEVICE_ID` | Optional; restricts provisioning to one CPE by its exact GenieACS `_id`, taking precedence over `HUAWEI_CONTROL_IP`. |
 | `GENIEACS_URL` | NBI URL; local default `http://127.0.0.1:7557`. |
 | `STATE_DIR` | Local default `.state/`; Docker uses `/data`. |
 | `PUBLIC_URL` | Default `http://127.0.0.1:8090`; participates in request validation. |
 | `LISTEN_HOST` / `PORT` | Local defaults `127.0.0.1` / `8090`; Docker listens internally on `0.0.0.0`. |
+| `LAN_IP` | Docker-only; interface the CWMP listener (`7547`) is published on. Default `127.0.0.1`; set to the Docker host's trusted LAN address for real CPEs. |
+| `GENIEACS_UI_JWT_SECRET` | Docker-only; required, no insecure default. GenieACS UI/NBI JWT signing secret. |
 
 See [AGENTS.md](AGENTS.md) for contributor/agent constraints and
 [compose.yml](compose.yml) for Docker settings.
@@ -424,7 +461,9 @@ See [AGENTS.md](AGENTS.md) for contributor/agent constraints and
   attribution. `THIRD_PARTY_LICENSES.md` covers the adapted codec; do not assume
   that it grants a license for every other project file.
 
-The dashboard, NBI and GenieACS UI bind to loopback in the supplied stack. Do not
-publish their APIs without authentication and transport/access controls. This is
-an experimental LAN integration, not an officially supported Huawei/Ubiquiti
+The dashboard, NBI and GenieACS UI bind to loopback in the supplied stack, and
+CWMP binds only to `LAN_IP` (default loopback). Do not publish their APIs
+without authentication and transport/access controls, and do not set `LAN_IP`
+to `0.0.0.0` or a public interface. This is an experimental LAN integration,
+not an officially supported Huawei/Ubiquiti
 management solution.

@@ -126,3 +126,20 @@ class ControlTests(unittest.TestCase):
             ap = {'id': 'other', 'ip': '192.0.2.99', 'virtual_mac': '02:00:00:00:00:02'}
             control.receive(ap, {'system_cfg': CONFIG, 'cfgversion': 'a'}, device(), {})
             self.assertEqual(calls, [])
+
+    def test_ambiguous_ip_disables_writes_fail_safe(self):
+        calls = []
+        with tempfile.TemporaryDirectory() as tmp:
+            control = Control(tmp, lambda *args: calls.append(args), '192.0.2.2')
+            ap = {'id': 'cpe', 'ip': '192.0.2.2', 'virtual_mac': '02:00:00:00:00:01'}
+            other = {'id': 'other', 'ip': '192.0.2.2'}
+            self.assertFalse(control.controlled(ap, [ap, other]))
+            self.assertTrue(control.controlled(ap, [ap]))
+            control.receive(ap, {'system_cfg': CONFIG, 'cfgversion': 'a'}, device(), {}, [ap, other])
+            self.assertEqual(calls, [])
+
+    def test_device_id_overrides_ip_matching(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            control = Control(tmp, lambda *args: None, '192.0.2.2', device_id='cpe')
+            self.assertTrue(control.controlled({'id': 'cpe', 'ip': '203.0.113.5'}))
+            self.assertFalse(control.controlled({'id': 'other', 'ip': '192.0.2.2'}))
