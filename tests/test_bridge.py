@@ -11,6 +11,7 @@ from types import SimpleNamespace
 
 from huawei_bridge.__main__ import handler
 from huawei_bridge.collector import mac, normalize, signal, virtual_mac
+from huawei_bridge.control import Control
 from huawei_bridge.protocol import BOOTSTRAP_KEY, ProtocolError, decode, encode
 from huawei_bridge.unifi import UniFi, apply_response, payload, validate_wlan_map
 
@@ -187,6 +188,62 @@ class ProtocolTests(unittest.TestCase):
                 self.assertEqual(statefile.stat().st_mode & 0o777, 0o600)
                 with self.assertRaises(ValueError):
                     UniFi(tmp, 'http://127.0.0.2:8080/inform').exchange(ap, snapshot)
+        finally:
+            peer.shutdown()
+            peer.server_close()
+
+    def test_forgotten_ap_resets_local_and_control_state(self):
+        """Simulates deleting/forgetting the virtual AP in the UniFi controller."""
+        private_key = bytes.fromhex('11223344556677889900aabbccddeeff')
+        # Request 0 adopts with the public bootstrap key; request 1 (still using the
+        # adopted key) is the controller's forget/factory-reset signal; request 2 is
+        # the device's next, unauthenticated report once it is unadopted again.
+        keys = [BOOTSTRAP_KEY, private_key, BOOTSTRAP_KEY]
+        responses = [{'_type': 'setparam', 'mgmt_cfg': 'authkey=' + private_key.hex()},
+                     {'_type': 'setdefault'}, {'_type': 'noop'}]
+        received = []
+
+        class Peer(BaseHTTPRequestHandler):
+            def log_message(self, *args):
+                pass
+
+            def do_POST(self):
+                index = len(received)
+                key = keys[index]
+                packet = decode(self.rfile.read(int(self.headers['Content-Length'])), key)
+                received.append(packet)
+                raw = encode(responses[index], packet.mac, key, mode=packet.mode)
+                self.send_response(200)
+                self.end_headers()
+                self.wfile.write(raw)
+
+        peer = ThreadingHTTPServer(('127.0.0.1', 0), Peer)
+        thread = threading.Thread(target=peer.serve_forever, daemon=True)
+        thread.start()
+        try:
+            with tempfile.TemporaryDirectory() as tmp:
+                url = f'http://127.0.0.1:{peer.server_port}/inform'
+                snapshot = normalize(fixture(), NOW)
+                ap = snapshot['aps'][0]
+                mapping = {'Test <SSID>': '0123456789abcdef01234567'}
+                calls = []
+                control = Control(tmp + '/control', lambda *a: calls.append(a), ap['ip'])
+                bridge = UniFi(tmp + '/unifi', url, mapping, control, lambda identity: {})
+
+                bridge.exchange(ap, snapshot)  # Adoption.
+                self.assertEqual(bridge.status[ap['virtual_mac']]['phase'], 'key-received')
+
+                bridge.exchange(ap, snapshot)  # Controller forgets the AP.
+                self.assertEqual(bridge.status[ap['virtual_mac']]['phase'], 'factory')
+                statefile = Path(tmp + '/unifi') / (ap['virtual_mac'].replace(':', '') + '.json')
+                self.assertFalse(json.loads(statefile.read_text()).get('authkey'))
+                self.assertEqual(control.public(ap)['phase'], 'awaiting-baseline')
+                self.assertEqual(calls, [])  # Forgetting never triggers an ACS write task.
+
+                bridge.exchange(ap, snapshot)  # Device resumes unauthenticated discovery.
+                self.assertEqual(received[2].mode, 'cbc')
+                self.assertTrue(received[2].body['default'])
+                self.assertEqual(received[2].body['state'], 0)
         finally:
             peer.shutdown()
             peer.server_close()
