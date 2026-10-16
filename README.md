@@ -467,3 +467,8 @@ without authentication and transport/access controls, and do not set `LAN_IP`
 to `0.0.0.0` or a public interface. This is an experimental LAN integration,
 not an officially supported Huawei/Ubiquiti
 management solution.
+
+All containers share a dedicated Compose network (`lab`) with `enable_ipv6: false`;
+every published port is also bound to an explicit IPv4 address (`LAN_IP` or
+`127.0.0.1`). The stack does not accept IPv6 traffic, matching the IPv4-only
+address handling in `inform_url()` and the dashboard's `Host`/`Origin` allowlist.

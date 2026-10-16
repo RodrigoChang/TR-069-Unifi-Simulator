@@ -2,6 +2,8 @@ services:
   mongo:
     image: mongo:7.0@sha256:9650758f83af117fc96699f030a44f9300bed839734e67012f56df05b2fd6290
     restart: unless-stopped
+    networks:
+      - lab
     volumes:
       - mongo-data:/data/db
     read_only: true
@@ -38,6 +40,8 @@ services:
       # CWMP has no server-side authentication in this lab stack; bind to the
       # trusted LAN interface only, never 0.0.0.0. Set LAN_IP in .env.
       - "${LAN_IP:-127.0.0.1}:7547:7547"
+    networks:
+      - lab
     read_only: true
     tmpfs:
       - /tmp
@@ -58,6 +62,8 @@ services:
     # port published. Remove the mapping entirely if you don't use it.
     ports:
       - "127.0.0.1:7557:7557"
+    networks:
+      - lab
     read_only: true
     tmpfs:
       - /tmp
@@ -75,6 +81,8 @@ services:
     environment: *genieacs-environment
     ports:
       - "127.0.0.1:3000:3000"
+    networks:
+      - lab
     read_only: true
     tmpfs:
       - /tmp
@@ -100,6 +108,8 @@ services:
       HUAWEI_CONTROL_IP: ${HUAWEI_CONTROL_IP:-}
     ports:
       - "127.0.0.1:8090:8090"
+    networks:
+      - lab
     volumes:
       - bridge-data:/data
     read_only: true
@@ -114,6 +124,13 @@ services:
       interval: 30s
       timeout: 5s
       retries: 3
+
+networks:
+  # No IPv6: CWMP/NBI auth and the Host/Origin allowlist assume IPv4-only
+  # addressing (see unifi.py's inform_url and __main__.py's allowed_hosts).
+  lab:
+    driver: bridge
+    enable_ipv6: false
 
 volumes:
   mongo-data:
