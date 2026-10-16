@@ -33,10 +33,11 @@ class Application:
         self.last_refresh = 0
         self.mutex = threading.RLock()
         self.control = Control(self.directory / 'control', self.request,
-                               os.environ.get('HUAWEI_CONTROL_IP', ''))
+                               os.environ.get('HUAWEI_CONTROL_IP', ''),
+                               os.environ.get('HUAWEI_CONTROL_DEVICE_ID', ''))
         self.unifi = UniFi(self.directory / 'unifi', os.environ.get('UNIFI_INFORM_URL', ''),
                            json.loads(os.environ.get('UNIFI_WLAN_MAP') or '{}'),
-                           self.control, self.device_lookup)
+                           self.control, self.device_lookup, self.mutex)
         self.http = urllib.request.build_opener(urllib.request.ProxyHandler({}))
 
     def device_lookup(self, identity):

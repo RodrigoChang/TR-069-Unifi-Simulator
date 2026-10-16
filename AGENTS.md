@@ -60,6 +60,12 @@ execute `stop` merely to test it against the active lab.
 - An empty `HUAWEI_CONTROL_IP` means observation only. Enabling it technically
   allows the bridge to write to one CPE; it does not authorize the agent to
   expand the scope of changes.
+- `HUAWEI_CONTROL_DEVICE_ID` pins control to one GenieACS device id; prefer it
+  over/with `HUAWEI_CONTROL_IP`. If the IP matches more than one device, writes
+  are disabled (fail-safe) — do not "fix" this by broadening the match.
+- `LAN_IP` must be set to bind the CWMP port (7547) to a specific host interface;
+  `GENIEACS_UI_JWT_SECRET` has no insecure default and compose fails fast if unset.
+  Do not reintroduce a default value for either.
 - Preserve `mongo-data` and `bridge-data`: they hold inventory, keys, adopted
   identity, WLAN bindings and provisioning state.
 - Do not run `docker compose down -v`, remove volumes, forget APs, reset keys or
@@ -102,6 +108,13 @@ execute `stop` merely to test it against the active lab.
 - Do not expose the dashboard, NBI or UI beyond loopback. Lab CWMP uses HTTP on
   port 7547 and must remain restricted to the LAN. GenieACS test authentication
   settings and the UI JWT secret are not a production configuration.
+- `unifi.py` only processes inbound control messages (`control.receive`/`reset`)
+  once a real `authkey` was adopted in a prior exchange — never while only the
+  public bootstrap key is in use. Preserve this ordering; it blocks a
+  pre-adoption MITM from pushing writes.
+- Container images (bridge, GenieACS, Mongo) are pinned by digest and run with
+  `read_only`/`cap_drop`/`no-new-privileges` where the service allows it. Do not
+  swap a pinned digest for a bare tag or drop this hardening to "simplify" compose.
 - Keep deployment-specific addresses and identifiers out of public files;
   preserve generic placeholders and disabled defaults in `.env.example`.
 

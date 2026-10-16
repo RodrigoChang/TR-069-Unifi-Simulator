@@ -5,6 +5,16 @@
 /backups/
 /logs/
 
+# Hallazgos de seguridad locales: pueden describir vulnerabilidades no corregidas.
+report-data.json
+hallazgos.md
+hallazgos.ctb
+findings/
+
+# Configuración local del agente (permisos específicos de esta máquina).
+.claude/settings.local.json
+.claude.local.md
+
 # Configuración y credenciales locales; conservar la plantilla pública.
 .env
 .env.*
@@ -40,7 +50,10 @@ dist/
 .DS_Store
 ._*
 .idea/
+.vscode/
 *.swp
 *.swo
 *~
+*.bak
+*.orig
 
