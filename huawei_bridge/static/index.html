@@ -1,0 +1,11 @@
+<!doctype html>
+<html lang="es">
+<head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Huawei TR-069 Bridge</title><link rel="stylesheet" href="/style.css"><script src="/app.js" defer></script></head>
+<body><main>
+<header><div><p class="eyebrow">HUAWEI · OBSERVABILIDAD LOCAL</p><h1>Tus puntos de acceso</h1><p>Radios y clientes reportados por TR-069</p></div><span id="connection" role="status">Conectando…</span></header>
+<section id="summary" class="metrics" aria-label="Resumen"></section>
+<p id="warnings" role="status"></p>
+<section><div class="section-title"><h2>Puntos de acceso</h2><span id="updated"></span></div><div id="aps" class="aps"></div></section>
+<section><h2>Clientes Wi-Fi</h2><div class="scroll"><table><thead><tr><th>Nombre / MAC</th><th>IP</th><th>AP que reporta</th><th>Banda</th><th>Señal</th><th>Actualización</th></tr></thead><tbody id="clients"></tbody></table></div></section>
+<footer>Fuente: GenieACS / TR-098. Configuración opcional: SSID, canal, activación y WMM; requiere confirmación por lectura del Huawei. No se aplican contraseñas ni firmware. La generación Wi-Fi de cada cliente no está disponible por TR-069 en este BE3; los valores predeterminados de UniFi no son mediciones.</footer>
+</main></body></html>

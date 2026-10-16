@@ -1,0 +1,77 @@
+services:
+  mongo:
+    image: mongo:7.0
+    restart: unless-stopped
+    volumes:
+      - mongo-data:/data/db
+
+  cwmp:
+    build: .
+    command: genieacs-cwmp
+    restart: unless-stopped
+    depends_on:
+      - mongo
+    environment: &genieacs-environment
+      GENIEACS_MONGODB_CONNECTION_URL: mongodb://mongo/genieacs
+      GENIEACS_CWMP_WORKER_PROCESSES: 1
+      GENIEACS_NBI_WORKER_PROCESSES: 1
+      GENIEACS_UI_WORKER_PROCESSES: 1
+      GENIEACS_UI_JWT_SECRET: test-only-change-before-production
+    ports:
+      - "7547:7547"
+
+  nbi:
+    build: .
+    command: genieacs-nbi
+    restart: unless-stopped
+    depends_on:
+      - mongo
+    environment: *genieacs-environment
+    ports:
+      - "127.0.0.1:7557:7557"
+
+  ui:
+    build: .
+    command: genieacs-ui
+    restart: unless-stopped
+    depends_on:
+      - mongo
+    environment: *genieacs-environment
+    ports:
+      - "127.0.0.1:3000:3000"
+
+  bridge:
+    build:
+      context: .
+      dockerfile: Dockerfile.bridge
+    restart: unless-stopped
+    depends_on:
+      - nbi
+    environment:
+      GENIEACS_URL: http://nbi:7557
+      PUBLIC_URL: http://127.0.0.1:8090
+      LISTEN_HOST: 0.0.0.0
+      STATE_DIR: /data
+      UNIFI_INFORM_URL: ${UNIFI_INFORM_URL:-}
+      UNIFI_WLAN_MAP: ${UNIFI_WLAN_MAP:-}
+      HUAWEI_CONTROL_IP: ${HUAWEI_CONTROL_IP:-}
+    ports:
+      - "127.0.0.1:8090:8090"
+    volumes:
+      - bridge-data:/data
+    read_only: true
+    tmpfs:
+      - /tmp
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8090/health', timeout=3)"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+
+volumes:
+  mongo-data:
+  bridge-data:
