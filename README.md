@@ -58,7 +58,10 @@ certification by an AI provider, Huawei, Ubiquiti or the upstream maintainers.
 
 Reference hardware: Huawei BE3 (`WUKUN-BE32`), firmware
 `4.2.0.53(SP1C1555)`, tested with UniFi Network `10.6.106`. Other hardware and
-versions require their own validation. The dashboard currently uses Spanish labels.
+versions require their own validation. Owner testing also confirmed read-only web
+authentication and inventory collection on the BE3; this does not establish full
+mesh completeness or support for every Huawei firmware. The dashboard currently
+uses Spanish labels.
 
 ```text
 Huawei CPE -- TR-069/CWMP --> GenieACS -- NBI --> Bridge -- inform --> UniFi
@@ -132,7 +135,6 @@ In the router's TR-069 settings:
 | Setting | Value |
 | --- | --- |
 | ACS URL | `http://<DOCKER_HOST_LAN_IP>:7547/` |
-| Periodic Inform | Enabled |
 | Inform interval | `60` seconds |
 | ACS username/password | Local test values if required by the router |
 
@@ -363,17 +365,127 @@ reported reliably to UniFi.**
 
 Huawei's authenticated `GET /api/system/HostInfo` was observed to return
 per-client `phyMode` values such as `802.11n`, `802.11ac`, `802.11ax` and
-`802.11be`, with some values empty. Integrating it requires an authenticated web
-collector and session-expiry handling. The current project does not export
-browser cookies or store web administrator credentials.
+`802.11be`, with some values empty. The optional web collector maps these exact
+values to Wi-Fi 4/5/6/7 in the local inventory. Unknown values remain unknown.
+UniFi client PHY flags are not exported until their schema is validated.
+Radio `Standard` capabilities remain independent of each client's observed mode.
 
 ### EasyMesh satellites
 
-EasyMesh collection is not implemented. Each CPE currently needs to register
-directly with GenieACS. The primary Huawei's authenticated
-`GET /api/device/l2topo` was observed to expose controller/agent relationships,
-but agent client lists can be empty. This is a possible future source, not proof
-of complete per-node telemetry or an existing project feature.
+Optional web collection parses HiLink `ConnectedDevices` and EasyMesh
+`routers`/`devices` into a separate local inventory. This is not an EasyMesh
+controller and does not configure satellites. Empty client lists do not prove
+zero clients; missing activity, parent, model or firmware stays unknown.
+No discovered IP is contacted automatically. Nodes without TR-069 remain local
+inventory, not additional virtual UniFi APs or write targets.
+
+### Optional Huawei web telemetry (experimental)
+
+TR-069/GenieACS remains the authoritative source for APs, radios, eligibility,
+association age and allowlisted configuration writes. The web API supplies extra
+read-only inventory, explicit client PHY and observed topology. Only an exact,
+unique match between web MAC and CPE `DeviceInfo.MACAddress` permits enrichment
+of an existing fresh ACS client under the same physical parent. IP/BSSID guesses
+are forbidden; ACS values win conflicts. This may intentionally leave inventories
+separate when the firmware exposes different MAC identities.
+
+The client authenticates with the router's **web administrator** credentials,
+not ACS credentials: initial HTML/cookie/CSRF, nonce challenge, PBKDF2/HMAC proof.
+The server nonce is a bounded printable ASCII string extending the client nonce,
+not a hex value to decode. It is preserved verbatim in the proof; whitespace,
+control characters, commas and unrelated/non-extended nonces are rejected.
+Session material remains in memory. Credentials are never taken from your browser.
+POST is restricted to login nonce/proof; telemetry uses GET on `deviceinfo`,
+`HostInfo`, `topology`, and `l2topo`. Missing optional topology endpoints are warnings.
+Polling runs separately every 30 seconds (after the previous poll), with a
+5-second request timeout, 1 MiB response limit and bounded topology traversal
+(16 levels / 4096 records per source). Observations expire after 180 seconds;
+failed polls retain the last successful timestamp. `/health` continues to measure
+ACS health; `web_status` reports web errors independently.
+
+Plain `make up` is unchanged and does not enable this source. To opt in:
+
+1. Create `.private/certs/` and a private password file outside public files,
+   e.g. `.private/huawei-password` with mode `0600`. Use a trusted editor; do not
+   put passwords in shell history or `.env`. One trailing newline is removed.
+2. Set `HUAWEI_WEB_URL` to the explicitly authorized router origin (HTTP or HTTPS,
+   without path/query/credentials), `HUAWEI_WEB_USERNAME` (usually `admin`) and
+   `HUAWEI_WEB_PASSWORD_FILE` to the **host** password-file path in your existing
+   `.env`. Do not replace `.env` from the example.
+3. For a private CA, place only its certificate in `.private/certs/` and set
+   `HUAWEI_WEB_CA_FILE=/run/huawei-certs/router-ca.pem` (**container** path).
+   Certificate and hostname verification are always enabled. HTTP has no transport
+   confidentiality; use it only on a trusted isolated LAN. No inherited proxies
+   or redirects are allowed. The router admin API is not a production-safe
+   least-privilege account merely because this client restricts its operations.
+4. Start explicitly:
+
+   ```sh
+   docker compose -f compose.yml -f compose.web.yml up -d --build bridge
+   ```
+
+To disable, clear the web URL in `.env` and recreate the bridge using only the
+base file: `docker compose -f compose.yml up -d --build --force-recreate bridge`.
+Keep both named volumes; do not reset adoption or delete keys. Compose secrets
+here are read-only file mounts, not an encrypted secret vault. Base port bindings,
+image digests, hardening and required JWT configuration remain unchanged.
+
+Some firmware accepts its certificate's DNS name for TLS but returns HTTP 404
+unless the HTTP `Host` header contains the management IP. In that case set
+`HUAWEI_WEB_HOST_HEADER` explicitly to the authorized router's bare IPv4 address
+(no port, URL, credentials or whitespace). Empty preserves the normal URL-derived
+header. The override applies to all login and telemetry requests; it does **not**
+change the connection destination, TLS SNI, certificate hostname verification,
+cookie URL origin or redirect policy. Never derive it from discovered mesh nodes.
+
+Keep `HUAWEI_WEB_URL=https://<CERTIFICATE_DNS_NAME>` and a verified CA file. If
+that DNS name does not resolve inside Docker, add an explicit mapping in a private
+override, e.g. `.private/compose.router.yml`:
+
+```yaml
+services:
+  bridge:
+    extra_hosts:
+      router.example.test: "192.0.2.1"  # Synthetic; use the certificate name and authorized IP.
+```
+
+Use the same authorized IP for `HUAWEI_WEB_HOST_HEADER` in your private `.env`,
+and include the private override whenever updating this deployment:
+
+```sh
+docker compose -f compose.yml -f compose.web.yml \
+  -f .private/compose.router.yml up -d --build bridge
+```
+
+Custom CA files must contain PEM certificates. A `.pem` extension alone does not
+convert DER/PKCS#7 exports. CA trust, certificate validity and hostname checks all
+remain required; this option is not an insecure-TLS workaround.
+
+AX3 API support is based on the approach documented by
+[vmakeev/huawei_mesh_router](https://github.com/vmakeev/huawei_mesh_router), which
+lists WS7100/WS7200/WS7206. This implementation has synthetic coverage, **not
+hardware validation** for those variants or all HarmonyOS/HiLink firmware.
+
+Mesh inventory distinguishes `reported` topology claims, `candidate` hosts with
+an explicit boolean `IsSlave=true`, and `conflict` records. An agent claim
+contradicted by `IsSlave=false`, contradictory slave flags, or conflicting roles
+does not confirm a router. Conflicting records retain their host/client observation;
+candidate and conflicting nodes cannot supply ownership for ACS enrichment.
+`HiLinkDevice=false` alone does not exclude an AX3. No parent is inferred for
+standalone candidates, and no discovered node is contacted automatically.
+HostInfo activity is association telemetry, not proof of node availability.
+Mesh cards may also show `Huawei (probable)` when a globally assigned MAC
+matches a locally bundled set of known Huawei prefixes. This set is intentionally
+partial, based on the [IEEE assignment registry](https://standards.ieee.org/products-programs/regauth/)
+and a [published Huawei prefix listing](https://maclookup.app/vendors/huawei-technologies-co-ltd).
+It is only a vendor hint: matching does not prove that a device is a router, and
+no match does not mean the device is not Huawei. Locally administered/randomized
+MACs are not labeled. The lookup runs locally and sends no MAC addresses anywhere.
+New AX3/unknown models are inventory-only until a suitable Wi-Fi 6 UniFi profile
+is verified. BE3 retains its virtual U7 Pro identity. Existing adopted profiles
+remain pinned, with `profile_migration_required` in emitter status on mismatch;
+no automatic model change or readoption occurs. No traffic rates, active channel
+width or unsupported per-node metrics are invented.
 
 ## Operation and persistence
 
@@ -423,15 +535,12 @@ Local execution defaults to NBI at `http://127.0.0.1:7557` and `.state/` for
 persistence. Export environment variables when running Python directly: `.env`
 is consumed by Compose, not automatically loaded by the application. Do not run
 a second emitter against the same virtual AP while the Docker bridge is active.
-Tests use synthetic fixtures/local HTTP peers, not the real router; HTTP tests
-require permission to bind loopback sockets.
-
-The reference implementation has 22 automated tests covering normalization,
-encryption/adoption, WLAN mapping, HTTP boundaries, translation, persistence,
-readback, faults and uncertain outcomes. Hardware validation included adoption,
-restart persistence, client visibility, 160 MHz capability display and an
-idempotent WMM write followed by fresh ACS readback. Disruptive SSID/channel
-changes have not been validated against the physical router.
+Automated tests use synthetic fixtures and local HTTP peers; they do not contact
+the physical router. HTTP tests require permission to bind loopback sockets.
+Owner hardware checks have included adoption, restart persistence, client
+visibility, 160 MHz capability display, an idempotent WMM write with fresh ACS
+readback, and read-only web login/inventory collection on the BE3. These checks
+do not validate disruptive SSID/channel changes, every mesh node, or all firmware.
 
 | Variable | Purpose / default |
 | --- | --- |
@@ -445,6 +554,12 @@ changes have not been validated against the physical router.
 | `LISTEN_HOST` / `PORT` | Local defaults `127.0.0.1` / `8090`; Docker listens internally on `0.0.0.0`. |
 | `LAN_IP` | Docker-only; interface the CWMP listener (`7547`) is published on. Default `127.0.0.1`; set to the Docker host's trusted LAN address for real CPEs. |
 | `GENIEACS_UI_JWT_SECRET` | Docker-only; required, no insecure default. GenieACS UI/NBI JWT signing secret. |
+| `HUAWEI_WEB_URL` | Empty disables optional web telemetry; explicitly authorized HTTP(S) origin. |
+| `HUAWEI_WEB_USERNAME` | Web administrator name; default `admin`. |
+| `HUAWEI_WEB_PASSWORD_FILE` | Required host path to the web password file when using `compose.web.yml`. |
+| `HUAWEI_WEB_CERTS_DIR` | Host directory mounted read-only for private CA certificates; default `./.private/certs`. |
+| `HUAWEI_WEB_CA_FILE` | Optional container path to a PEM CA file; TLS verification remains enabled. |
+| `HUAWEI_WEB_HOST_HEADER` | Optional bare IPv4 HTTP Host override for compatible firmware; does not change TLS hostname verification. |
 
 See [AGENTS.md](AGENTS.md) for contributor/agent constraints and
 [compose.yml](compose.yml) for Docker settings.

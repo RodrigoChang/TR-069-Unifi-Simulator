@@ -30,7 +30,7 @@ def fixture():
                 'AssociatedDeviceIPAddress': field('192.0.2.10'),
                 'AssociatedDeviceRssi': field(55)}}}
     return [{'_id': 'test-ap', '_deviceId': {'_Manufacturer': 'Huawei Device Co., Ltd.',
-            '_ProductClass': 'TestAP'}, '_lastInform': STAMP, 'InternetGatewayDevice': {
+            '_ProductClass': 'WUKUN-BE32'}, '_lastInform': STAMP, 'InternetGatewayDevice': {
             'ManagementServer': {'ConnectionRequestURL': field('https://192.0.2.2:7547/callback')},
             'DeviceInfo': {'SoftwareVersion': field('test')},
             'LANDevice': {'1': {'WLANConfiguration': {'2': wlan}, 'Hosts': {'Host': {'1': {

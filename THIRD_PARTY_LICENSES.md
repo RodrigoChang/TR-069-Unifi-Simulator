@@ -30,3 +30,36 @@ AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
 LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
 OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
+
+## Huawei web authentication reference
+
+The login-proof calculation in `huawei_bridge/web.py` is adapted from
+[`client/crypto.py` in vmakeev/huawei_mesh_router](https://github.com/vmakeev/huawei_mesh_router/blob/master/custom_components/huawei_mesh_router/client/crypto.py).
+The endpoint and HiLink field conventions also informed the independent,
+standard-library implementation. No Home Assistant code is loaded at runtime.
+Source consulted: `master`, 2026-10-18; its commit SHA could not be independently
+resolved in this environment. The published v0.9.3.2 release points to
+`440b6c776bbc8e4dbb8dc18d39f4111abe6a2b24`; it is not claimed as a verified pin
+of the inspected master files. Thank you to Vladimir Makeev and contributors.
+
+MIT License
+
+Copyright (c) 2022 Vladimir Makeev
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.

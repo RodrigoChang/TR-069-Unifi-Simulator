@@ -12,6 +12,8 @@ from urllib.parse import quote, urlsplit
 from .collector import normalize
 from .control import Control
 from .unifi import UniFi
+from .web import HuaweiWeb
+from .mesh import merge_web
 
 LOG = logging.getLogger('huawei-bridge')
 STATIC = Path(__file__).parent / 'static'
@@ -32,6 +34,14 @@ class Application:
         self.last_error = None
         self.last_refresh = 0
         self.mutex = threading.RLock()
+        self.web = HuaweiWeb(os.environ.get('HUAWEI_WEB_URL', ''),
+                             os.environ.get('HUAWEI_WEB_USERNAME', 'admin'),
+                             os.environ.get('HUAWEI_WEB_PASSWORD_FILE', ''),
+                             os.environ.get('HUAWEI_WEB_CA_FILE', ''),
+                             host_header=os.environ.get('HUAWEI_WEB_HOST_HEADER', ''))
+        self.web_snapshot = {}
+        self.web_status = {'enabled': bool(self.web.url), 'last_success': None, 'error': None}
+        self.web_stop = threading.Event()
         self.control = Control(self.directory / 'control', self.request,
                                os.environ.get('HUAWEI_CONTROL_IP', ''),
                                os.environ.get('HUAWEI_CONTROL_DEVICE_ID', ''))
@@ -75,7 +85,8 @@ class Application:
 
     def snapshot(self):
         with self.mutex:
-            result = normalize(self.devices)
+            result = merge_web(normalize(self.devices), self.web_snapshot, self.devices)
+            result['web_status'] = dict(self.web_status)
             result.update(acs_last_collection=self.last_collection, acs_error=self.last_error,
                           unifi_enabled=bool(self.unifi.url), unifi=dict(self.unifi.status))
             if self.last_error:
@@ -85,6 +96,22 @@ class Application:
             if unmapped:
                 result['warnings'].append('SSID sin vínculo WLAN en UniFi: ' + ', '.join(unmapped))
             return result
+
+    def collect_web(self):
+        # HTTP/authentication must not hold the ACS/inform mutex.
+        try:
+            observation = self.web.collect()
+            with self.mutex:
+                self.web_snapshot = observation
+                self.web_status.update(last_success=observation['collected_at'], error=None)
+        except Exception as exc:
+            with self.mutex:
+                self.web_status['error'] = type(exc).__name__
+
+    def web_worker(self):
+        while not self.web_stop.is_set():
+            self.collect_web()
+            self.web_stop.wait(30)
 
     def worker(self):
         next_collect = 0
@@ -151,10 +178,16 @@ def main():
     app = Application()
     thread = threading.Thread(target=app.worker, daemon=True)
     thread.start()
+    if app.web.url:
+        threading.Thread(target=app.web_worker, daemon=True).start()
     server = ThreadingHTTPServer((os.environ.get('LISTEN_HOST', '127.0.0.1'), int(os.environ.get('PORT', '8090'))), handler(app))
     server.daemon_threads = True
     LOG.info('Huawei Bridge disponible en %s', app.public_url)
-    server.serve_forever()
+    try:
+        server.serve_forever()
+    finally:
+        app.web_stop.set()
+        server.server_close()
 
 
 if __name__ == '__main__':

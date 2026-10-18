@@ -18,6 +18,30 @@ MODEL = 'U7PRO'
 VERSION = '8.7.11.19419'
 
 
+def profile_for(ap):
+    # AX3/unknown models remain inventory-only until a controller profile is verified.
+    if ap.get('name') == 'WUKUN-BE32':
+        return {'model': MODEL, 'model_display': 'Huawei BE3 bridge (virtual U7 Pro)',
+                'version': VERSION, 'required_version': '8.0.28'}
+    return None
+
+
+def selected_profile(ap, state):
+    desired = profile_for(ap)
+    existing = state.get('profile')
+    if not existing and state.get('authkey'):
+        # State written before profile persistence always used this exact profile.
+        existing = profile_for({'name': 'WUKUN-BE32'})
+    if existing:
+        state['profile'] = dict(existing)
+        state['profile_migration_required'] = desired != existing
+        return state['profile']
+    if desired:
+        state['profile'] = dict(desired)
+        state['profile_migration_required'] = False
+    return desired
+
+
 class NoRedirect(urllib.request.HTTPRedirectHandler):
     def redirect_request(self, req, fp, code, msg, headers, newurl):
         return None
@@ -71,8 +95,10 @@ def validate_wlan_map(mapping):
 
 def payload(ap, snapshot, state, url, uptime, wlan_map=None):
     vm = ap['virtual_mac']
-    body = {'model': MODEL, 'model_display': 'Huawei BE3 bridge (virtual U7 Pro)',
-            'version': VERSION, 'required_version': '8.0.28',
+    profile = selected_profile(ap, state)
+    if profile is None:
+        raise ValueError('No verified virtual profile for this hardware')
+    body = {**profile,
             'mac': vm, 'serial': vm.replace(':', '').upper(),
             'hostname': 'Huawei-' + vm.replace(':', '')[-6:],
             'ip': ap['ip'] or '0.0.0.0', 'inform_url': url,
@@ -175,6 +201,12 @@ class UniFi:
         identity = ap['virtual_mac']
         path = self.directory / (identity.replace(':', '') + '.json')
         state = json.loads(path.read_text()) if path.exists() else {'phase': 'factory'}
+        if selected_profile(ap, state) is None:
+            with self.lock:
+                self.status[identity] = {'phase': 'inventory_only', 'experimental': True,
+                                        'reason': 'No verified virtual profile'}
+            self.next_send[identity] = time.monotonic() + 30
+            return
         if state.get('controller_url', self.url) != self.url:
             raise ValueError('State belongs to another controller')
         state['controller_url'] = self.url
@@ -217,7 +249,8 @@ class UniFi:
         state['last_success'] = time.time()
         atomic_json(path, state)
         status = {'phase': state['phase'], 'last_success': state['last_success'],
-                  'model': MODEL, 'experimental': True,
+                  'model': state['profile']['model'], 'experimental': True,
+                  'profile_migration_required': state.get('profile_migration_required', False),
                   'stations_sent': sum(len(v['sta_table']) for v in data['vap_table']),
                   'unmapped_ssids': sorted({r['ssid'] for r in ap['radios']
                       if r.get('enabled') is not False and not r.get('stale')
