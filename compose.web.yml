@@ -1,0 +1,22 @@
+# Explicit opt-in: docker compose -f compose.yml -f compose.web.yml up -d --build bridge
+services:
+  bridge:
+    environment:
+      HUAWEI_WEB_URL: ${HUAWEI_WEB_URL:?Set the explicitly authorized Huawei origin}
+      HUAWEI_WEB_USERNAME: ${HUAWEI_WEB_USERNAME:-admin}
+      HUAWEI_WEB_PASSWORD_FILE: /run/secrets/huawei_web_password
+      HUAWEI_WEB_CA_FILE: ${HUAWEI_WEB_CA_FILE:-}
+      HUAWEI_WEB_HOST_HEADER: ${HUAWEI_WEB_HOST_HEADER:-}
+    secrets:
+      - huawei_web_password
+    volumes:
+      - type: bind
+        source: ${HUAWEI_WEB_CERTS_DIR:-./.private/certs}
+        target: /run/huawei-certs
+        read_only: true
+        bind:
+          create_host_path: false
+
+secrets:
+  huawei_web_password:
+    file: ${HUAWEI_WEB_PASSWORD_FILE:?Set the host path of the router password file}

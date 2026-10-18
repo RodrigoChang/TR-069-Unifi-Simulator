@@ -7,5 +7,6 @@
 <p id="warnings" role="status"></p>
 <section><div class="section-title"><h2>Puntos de acceso</h2><span id="updated"></span></div><div id="aps" class="aps"></div></section>
 <section><h2>Clientes Wi-Fi</h2><div class="scroll"><table><thead><tr><th>Nombre / MAC</th><th>IP</th><th>AP que reporta</th><th>Banda</th><th>Señal</th><th>Actualización</th></tr></thead><tbody id="clients"></tbody></table></div></section>
-<footer>Fuente: GenieACS / TR-098. Configuración opcional: SSID, canal, activación y WMM; requiere confirmación por lectura del Huawei. No se aplican contraseñas ni firmware. La generación Wi-Fi de cada cliente no está disponible por TR-069 en este BE3; los valores predeterminados de UniFi no son mediciones.</footer>
+<section><h2>Inventario Huawei web / mesh</h2><p id="web-status"></p><div id="mesh" class="aps"></div><div class="scroll"><table><thead><tr><th>Cliente / MAC</th><th>AP físico</th><th>Banda</th><th>Tecnología observada</th><th>Actualización</th></tr></thead><tbody id="mesh-clients"></tbody></table></div></section>
+<footer>Fuente: GenieACS / TR-098 y, opcionalmente, API web Huawei de sólo lectura. Los nodos mesh son inventario local, no AP virtuales adicionales. Configuración opcional por TR-069: SSID, canal, activación y WMM; requiere confirmación por lectura. La tecnología por cliente sólo aparece si se observa explícitamente por web; no se exporta como indicador PHY a UniFi.</footer>
 </main></body></html>
